@@ -1,0 +1,2848 @@
+Обновленный template.php (с использованием BX. библиотеки)
+<?php
+
+/**
+ * Шаблон компонента Excel импортера
+ * Использует стандартную библиотеку BX. для работы с AJAX и интерфейсом
+ */
+
+if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) die();
+
+// Подключаем необходимые JS-библиотеки
+CJSCore::Init(['ajax', 'popup', 'loader']);
+
+// Получаем ID компонента для уникальных идентификаторов
+$componentId = $this->getComponent()->getSiteTemplateId();
+
+?>
+<div id="excel-importer-<?=$componentId?>" class="excel-importer-wrap">
+    <div class="import-container">
+        <h2><?=GetMessage('EXCEL_IMPORTER_TITLE')?></h2>
+        
+        <?php if (!empty($arResult['ERRORS'])): ?>
+            <div class="import-errors">
+                <?php foreach ($arResult['ERRORS'] as $error): ?>
+                    <div class="error-item"><?=htmlspecialcharsbx($error->getMessage())?></div>
+                <?php endforeach; ?>
+            </div>
+        <?php else: ?>
+        
+        <!-- Информационный блок о структуре файла -->
+        <div class="info-box">
+            <div class="info-box-icon">ℹ️</div>
+            <div class="info-box-content">
+                <p><strong><?=GetMessage('EXCEL_IMPORTER_STRUCTURE_TITLE')?></strong></p>
+                <ul>
+                    <li><strong><?=GetMessage('EXCEL_IMPORTER_ROW_1')?></strong> <?=GetMessage('EXCEL_IMPORTER_ROW_1_DESC')?></li>
+                    <li><strong><?=GetMessage('EXCEL_IMPORTER_ROW_2')?></strong> <?=GetMessage('EXCEL_IMPORTER_ROW_2_DESC')?></li>
+                    <li><strong><?=GetMessage('EXCEL_IMPORTER_ROW_3')?></strong> <?=GetMessage('EXCEL_IMPORTER_ROW_3_DESC')?></li>
+                </ul>
+                <p class="info-note"><small><?=GetMessage('EXCEL_IMPORTER_SUPPORT_NOTE')?></small></p>
+            </div>
+        </div>
+        
+        <!-- Если есть активные сессии, показываем их -->
+        <?php if (!empty($arResult['ACTIVE_SESSIONS'])): ?>
+        <div class="active-sessions">
+            <h3><?=GetMessage('EXCEL_IMPORTER_ACTIVE_SESSIONS')?></h3>
+            <?php foreach ($arResult['ACTIVE_SESSIONS'] as $session): ?>
+            <div class="session-item" data-session-id="<?=$session['SESSION_ID']?>">
+                <div class="session-info">
+                    <span class="session-file"><?=htmlspecialcharsbx($session['FILE_NAME'])?></span>
+                    <span class="session-status status-<?=$session['STATUS']?>">
+                        <?=GetMessage('EXCEL_IMPORTER_STATUS_' . strtoupper($session['STATUS']))?>
+                    </span>
+                    <span class="session-progress"><?=$session['PROGRESS']?>%</span>
+                </div>
+                <div class="session-actions">
+                    <button class="btn btn-sm btn-primary resume-session-btn" 
+                            data-session-id="<?=$session['SESSION_ID']?>">
+                        <?=GetMessage('EXCEL_IMPORTER_CONTINUE')?>
+                    </button>
+                    <button class="btn btn-sm btn-danger delete-session-btn" 
+                            data-session-id="<?=$session['SESSION_ID']?>">
+                        <?=GetMessage('EXCEL_IMPORTER_DELETE')?>
+                    </button>
+                </div>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+        
+        <!-- Основная форма загрузки -->
+        <div id="upload-section" class="upload-section">
+            <div class="upload-area" id="drop-zone-<?=$componentId?>">
+                <div class="upload-icon">📁</div>
+                <p><?=GetMessage('EXCEL_IMPORTER_DRAG_OR_CLICK')?></p>
+                <input type="file" id="file-input-<?=$componentId?>" accept=".xlsx,.xls" style="display:none">
+                <button class="btn btn-primary" id="select-file-btn-<?=$componentId?>">
+                    <?=GetMessage('EXCEL_IMPORTER_SELECT_FILE')?>
+                </button>
+            </div>
+            
+            <!-- Информация о загруженном файле -->
+            <div id="file-info-<?=$componentId?>" style="display:none">
+                <div class="file-details">
+                    <div class="file-icon">📄</div>
+                    <div class="file-info-content">
+                        <span class="file-name"></span>
+                        <span class="file-size"></span>
+                    </div>
+                </div>
+                <div id="file-structure-<?=$componentId?>" class="file-structure" style="display:none">
+                    <div class="structure-row">
+                        <span class="structure-label"><?=GetMessage('EXCEL_IMPORTER_FIELDS_FOUND')?>:</span>
+                        <span class="structure-value" id="field-count-<?=$componentId?>">0</span>
+                    </div>
+                    <div class="structure-row">
+                        <span class="structure-label"><?=GetMessage('EXCEL_IMPORTER_ROWS_FOUND')?>:</span>
+                        <span class="structure-value" id="total-rows-display-<?=$componentId?>">0</span>
+                    </div>
+                    <div id="warnings-container-<?=$componentId?>" style="display:none">
+                        <div class="warning-message">
+                            <span class="warning-icon">⚠️</span>
+                            <span class="warning-text"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="file-actions">
+                    <button class="btn btn-success" id="start-import-btn-<?=$componentId?>" disabled>
+                        <?=GetMessage('EXCEL_IMPORTER_START_IMPORT')?>
+                    </button>
+                    <button class="btn btn-secondary" id="cancel-file-btn-<?=$componentId?>">
+                        <?=GetMessage('EXCEL_IMPORTER_CANCEL')?>
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Блок прогресса импорта -->
+        <div id="progress-section-<?=$componentId?>" style="display:none">
+            <div class="progress-container">
+                <div class="progress-header">
+                    <span class="progress-title"><?=GetMessage('EXCEL_IMPORTER_IMPORTING')?></span>
+                    <span class="progress-percent" id="progress-percent-<?=$componentId?>">0%</span>
+                </div>
+                <div class="progress-bar-wrap">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill-<?=$componentId?>" style="width:0%">
+                            <span class="progress-fill-text"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="progress-status" id="progress-status-<?=$componentId?>">
+                    <?=GetMessage('EXCEL_IMPORTER_WAITING')?>
+                </div>
+            </div>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">📊</div>
+                    <div class="stat-info">
+                        <div class="stat-label"><?=GetMessage('EXCEL_IMPORTER_TOTAL_ROWS')?></div>
+                        <div class="stat-value" id="total-rows-<?=$componentId?>">0</div>
+                    </div>
+                </div>
+                <div class="stat-card stat-success">
+                    <div class="stat-icon">✅</div>
+                    <div class="stat-info">
+                        <div class="stat-label"><?=GetMessage('EXCEL_IMPORTER_IMPORTED')?></div>
+                        <div class="stat-value" id="imported-rows-<?=$componentId?>">0</div>
+                    </div>
+                </div>
+                <div class="stat-card stat-error">
+                    <div class="stat-icon">❌</div>
+                    <div class="stat-info">
+                        <div class="stat-label"><?=GetMessage('EXCEL_IMPORTER_ERRORS')?></div>
+                        <div class="stat-value" id="error-count-<?=$componentId?>">0</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="errors-container-<?=$componentId?>" style="display:none">
+                <div class="errors-header">
+                    <h4><?=GetMessage('EXCEL_IMPORTER_ERROR_LIST')?> (<span id="errors-total-<?=$componentId?>">0</span>)</h4>
+                    <button class="btn btn-sm btn-secondary" id="toggle-errors-btn-<?=$componentId?>">
+                        <?=GetMessage('EXCEL_IMPORTER_SHOW_ERRORS')?>
+                    </button>
+                </div>
+                <div id="error-messages-<?=$componentId?>" class="error-messages" style="display:none"></div>
+            </div>
+            
+            <div class="progress-actions">
+                <button class="btn btn-danger" id="cancel-import-btn-<?=$componentId?>">
+                    <?=GetMessage('EXCEL_IMPORTER_CANCEL_IMPORT')?>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Блок результатов -->
+        <div id="result-section-<?=$componentId?>" style="display:none">
+            <div class="result-message" id="result-message-<?=$componentId?>">
+                <div class="result-icon">🎉</div>
+                <h3><?=GetMessage('EXCEL_IMPORTER_COMPLETE')?></h3>
+                <div class="result-stats">
+                    <div class="result-stat">
+                        <span class="result-label"><?=GetMessage('EXCEL_IMPORTER_SUCCESSFULLY')?>:</span>
+                        <span class="result-value result-success" id="result-imported-<?=$componentId?>">0</span>
+                    </div>
+                    <div class="result-stat">
+                        <span class="result-label"><?=GetMessage('EXCEL_IMPORTER_ERRORS')?>:</span>
+                        <span class="result-value result-error" id="result-errors-<?=$componentId?>">0</span>
+                    </div>
+                </div>
+                <?php if (!empty($arResult['STATUS']['warnings'])): ?>
+                <div class="result-warnings">
+                    <h4><?=GetMessage('EXCEL_IMPORTER_WARNINGS')?>:</h4>
+                    <p><?=htmlspecialcharsbx($arResult['STATUS']['warnings']['message'] ?? '')?></p>
+                </div>
+                <?php endif; ?>
+            </div>
+            <div class="result-actions">
+                <button class="btn btn-primary" id="reset-import-btn-<?=$componentId?>">
+                    <?=GetMessage('EXCEL_IMPORTER_NEW_IMPORT')?>
+                </button>
+                <button class="btn btn-secondary" id="download-log-btn-<?=$componentId?>">
+                    <?=GetMessage('EXCEL_IMPORTER_DOWNLOAD_LOG')?>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Скрытые данные для JS -->
+        <div style="display:none">
+            <input type="hidden" id="component-id-<?=$componentId?>" value="<?=$componentId?>">
+            <input type="hidden" id="iblock-id-<?=$componentId?>" value="<?=$arResult['IBLOCK_ID']?>">
+            <input type="hidden" id="chunk-size-<?=$componentId?>" value="<?=$arResult['CHUNK_SIZE']?>">
+        </div>
+        
+        <?php endif; ?>
+    </div>
+</div>
+
+<script>
+    // Передаем данные из PHP в JavaScript
+    BX.message({
+        'EXCEL_IMPORTER_JS_UPLOADING': '<?=GetMessage('EXCEL_IMPORTER_JS_UPLOADING')?>',
+        'EXCEL_IMPORTER_JS_FILE_LOADED': '<?=GetMessage('EXCEL_IMPORTER_JS_FILE_LOADED')?>',
+        'EXCEL_IMPORTER_JS_START_IMPORT': '<?=GetMessage('EXCEL_IMPORTER_JS_START_IMPORT')?>',
+        'EXCEL_IMPORTER_JS_IMPORTING': '<?=GetMessage('EXCEL_IMPORTER_JS_IMPORTING')?>',
+        'EXCEL_IMPORTER_JS_COMPLETE': '<?=GetMessage('EXCEL_IMPORTER_JS_COMPLETE')?>',
+        'EXCEL_IMPORTER_JS_CANCELLED': '<?=GetMessage('EXCEL_IMPORTER_JS_CANCELLED')?>',
+        'EXCEL_IMPORTER_JS_ERROR': '<?=GetMessage('EXCEL_IMPORTER_JS_ERROR')?>',
+        'EXCEL_IMPORTER_JS_CONFIRM_CANCEL': '<?=GetMessage('EXCEL_IMPORTER_JS_CONFIRM_CANCEL')?>',
+        'EXCEL_IMPORTER_JS_WRONG_FORMAT': '<?=GetMessage('EXCEL_IMPORTER_JS_WRONG_FORMAT')?>',
+        'EXCEL_IMPORTER_JS_NO_DATA': '<?=GetMessage('EXCEL_IMPORTER_JS_NO_DATA')?>'
+    });
+</script>
+
+
+
+=============================================================================
+
+
+Обновленный script.js (с использованием BX. библиотеки)
+
+
+/**
+ * JavaScript контроллер для Excel импортера
+ * Использует стандартную библиотеку BX. Битрикс
+ */
+(function() {
+    'use strict';
+
+    /**
+     * Основной класс контроллера импорта
+     */
+    BX.namespace('BX.ExcelImporter');
+
+    BX.ExcelImporter.Controller = function(params) {
+        this.componentId = params.componentId || 'default';
+        this.iblockId = params.iblockId || 0;
+        this.chunkSize = params.chunkSize || 50;
+        
+        // Состояние импорта
+        this.isImporting = false;
+        this.isCancelled = false;
+        this.currentStartRow = 3;
+        this.totalRows = 0;
+        this.importedRows = 0;
+        this.errorCount = 0;
+        this.currentSessionId = null;
+        this.errors = [];
+        
+        // DOM элементы
+        this.elements = {
+            dropZone: BX('drop-zone-' + this.componentId),
+            fileInput: BX('file-input-' + this.componentId),
+            fileInfo: BX('file-info-' + this.componentId),
+            fileStructure: BX('file-structure-' + this.componentId),
+            fileName: BX.findChild(BX('file-info-' + this.componentId), {class: 'file-name'}, true),
+            fileSize: BX.findChild(BX('file-info-' + this.componentId), {class: 'file-size'}, true),
+            selectFileBtn: BX('select-file-btn-' + this.componentId),
+            cancelFileBtn: BX('cancel-file-btn-' + this.componentId),
+            startImportBtn: BX('start-import-btn-' + this.componentId),
+            progressSection: BX('progress-section-' + this.componentId),
+            resultSection: BX('result-section-' + this.componentId),
+            progressFill: BX('progress-fill-' + this.componentId),
+            progressPercent: BX('progress-percent-' + this.componentId),
+            progressStatus: BX('progress-status-' + this.componentId),
+            totalRows: BX('total-rows-' + this.componentId),
+            totalRowsDisplay: BX('total-rows-display-' + this.componentId),
+            importedRows: BX('imported-rows-' + this.componentId),
+            errorCount: BX('error-count-' + this.componentId),
+            errorsContainer: BX('errors-container-' + this.componentId),
+            errorMessages: BX('error-messages-' + this.componentId),
+            errorsTotal: BX('errors-total-' + this.componentId),
+            toggleErrorsBtn: BX('toggle-errors-btn-' + this.componentId),
+            cancelImportBtn: BX('cancel-import-btn-' + this.componentId),
+            resetImportBtn: BX('reset-import-btn-' + this.componentId),
+            downloadLogBtn: BX('download-log-btn-' + this.componentId),
+            resultImported: BX('result-imported-' + this.componentId),
+            resultErrors: BX('result-errors-' + this.componentId),
+            fieldCount: BX('field-count-' + this.componentId),
+            warningsContainer: BX('warnings-container-' + this.componentId),
+            warningText: BX.findChild(BX('warnings-container-' + this.componentId), {class: 'warning-text'}, true),
+            componentId: BX('component-id-' + this.componentId)
+        };
+
+        // Инициализация
+        this.init();
+    };
+
+    /**
+     * Прототип класса
+     */
+    BX.ExcelImporter.Controller.prototype = {
+        /**
+         * Инициализация компонента
+         */
+        init: function() {
+            this.bindEvents();
+            this.checkStatus();
+            this.initActiveSessions();
+            
+            // Показываем информационное сообщение
+            this.updateStatus(BX.message('EXCEL_IMPORTER_JS_UPLOADING'));
+        },
+
+        /**
+         * Привязка событий
+         */
+        bindEvents: function() {
+            var self = this;
+
+            // Выбор файла
+            if (this.elements.selectFileBtn) {
+                BX.bind(this.elements.selectFileBtn, 'click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (self.elements.fileInput) {
+                        self.elements.fileInput.click();
+                    }
+                });
+            }
+
+            // Загрузка файла через input
+            if (this.elements.fileInput) {
+                BX.bind(this.elements.fileInput, 'change', function(e) {
+                    var file = this.files[0];
+                    if (file) {
+                        self.handleFile(file);
+                    }
+                });
+            }
+
+            // Отмена загрузки файла
+            if (this.elements.cancelFileBtn) {
+                BX.bind(this.elements.cancelFileBtn, 'click', function(e) {
+                    self.resetUpload();
+                });
+            }
+
+            // Drag and Drop
+            if (this.elements.dropZone) {
+                BX.bind(this.elements.dropZone, 'dragover', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    BX.addClass(this, 'dragover');
+                });
+
+                BX.bind(this.elements.dropZone, 'dragleave', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    BX.removeClass(this, 'dragover');
+                });
+
+                BX.bind(this.elements.dropZone, 'drop', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    BX.removeClass(this, 'dragover');
+                    
+                    var files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        self.handleFile(files[0]);
+                    }
+                });
+
+                // Клик по зоне для выбора файла
+                BX.bind(this.elements.dropZone, 'click', function() {
+                    if (self.elements.fileInput) {
+                        self.elements.fileInput.click();
+                    }
+                });
+            }
+
+            // Начало импорта
+            if (this.elements.startImportBtn) {
+                BX.bind(this.elements.startImportBtn, 'click', function() {
+                    self.startImport();
+                });
+            }
+
+            // Отмена импорта
+            if (this.elements.cancelImportBtn) {
+                BX.bind(this.elements.cancelImportBtn, 'click', function() {
+                    self.cancelImport();
+                });
+            }
+
+            // Сброс импорта (начать новый)
+            if (this.elements.resetImportBtn) {
+                BX.bind(this.elements.resetImportBtn, 'click', function() {
+                    self.resetImport();
+                });
+            }
+
+            // Скачивание лога
+            if (this.elements.downloadLogBtn) {
+                BX.bind(this.elements.downloadLogBtn, 'click', function() {
+                    self.downloadLog();
+                });
+            }
+
+            // Показать/скрыть ошибки
+            if (this.elements.toggleErrorsBtn) {
+                BX.bind(this.elements.toggleErrorsBtn, 'click', function() {
+                    self.toggleErrors();
+                });
+            }
+
+            // Обработка активных сессий
+            var resumeButtons = BX.findChildrenByClassName(document, 'resume-session-btn');
+            BX.each(resumeButtons, function(btn) {
+                BX.bind(btn, 'click', function() {
+                    var sessionId = this.getAttribute('data-session-id');
+                    self.resumeImport(sessionId);
+                });
+            });
+
+            var deleteButtons = BX.findChildrenByClassName(document, 'delete-session-btn');
+            BX.each(deleteButtons, function(btn) {
+                BX.bind(btn, 'click', function() {
+                    var sessionId = this.getAttribute('data-session-id');
+                    self.deleteSession(sessionId);
+                });
+            });
+        },
+
+        /**
+         * Инициализация активных сессий
+         */
+        initActiveSessions: function() {
+            var self = this;
+            var sessionItems = BX.findChildrenByClassName(document, 'session-item');
+            
+            BX.each(sessionItems, function(item) {
+                var status = BX.findChild(item, {class: 'session-status'}, true);
+                if (status) {
+                    var statusClass = BX.className(status);
+                    if (statusClass.indexOf('status-processing') !== -1 ||
+                        statusClass.indexOf('status-ready') !== -1) {
+                        // Активная сессия, можно продолжить
+                    }
+                }
+            });
+        },
+
+        /**
+         * Обработка выбранного файла
+         */
+        handleFile: function(file) {
+            var ext = file.name.split('.').pop().toLowerCase();
+            if (['xlsx', 'xls'].indexOf(ext) === -1) {
+                BX.UI.Notification.Center.notify({
+                    content: BX.message('EXCEL_IMPORTER_JS_WRONG_FORMAT'),
+                    position: 'top-center',
+                    autoHide: true,
+                    autoHideDelay: 3000
+                });
+                return;
+            }
+
+            // Отображаем информацию о файле
+            this.showFileInfo(file);
+            
+            // Загружаем файл
+            this.uploadFile(file);
+        },
+
+        /**
+         * Отображение информации о файле
+         */
+        showFileInfo: function(file) {
+            if (this.elements.fileName) {
+                this.elements.fileName.textContent = file.name;
+            }
+            if (this.elements.fileSize) {
+                this.elements.fileSize.textContent = this.formatFileSize(file.size);
+            }
+            
+            BX.show(this.elements.fileInfo);
+            BX.hide(this.elements.dropZone);
+            this.elements.startImportBtn.disabled = true;
+            this.elements.startImportBtn.textContent = BX.message('EXCEL_IMPORTER_JS_UPLOADING');
+        },
+
+        /**
+         * Загрузка файла на сервер
+         */
+        uploadFile: function(file) {
+            var self = this;
+            var formData = new FormData();
+            formData.append('file', file);
+            formData.append('action', 'upload');
+
+            this.updateStatus(BX.message('EXCEL_IMPORTER_JS_UPLOADING'));
+
+            BX.ajax({
+                method: 'POST',
+                dataType: 'json',
+                url: window.location.href,
+                data: formData,
+                processData: false,
+                contentType: false,
+                onsuccess: function(response) {
+                    if (response.success) {
+                        self.totalRows = response.total_rows;
+                        self.currentSessionId = response.session_id;
+                        
+                        if (self.elements.totalRowsDisplay) {
+                            self.elements.totalRowsDisplay.textContent = self.totalRows;
+                        }
+                        if (self.elements.fieldCount) {
+                            self.elements.fieldCount.textContent = response.field_count || 0;
+                        }
+                        
+                        if (response.warnings && response.warnings.unknown_fields) {
+                            self.showWarnings(response.warnings.message);
+                        }
+                        
+                        BX.show(self.elements.fileStructure);
+                        self.elements.startImportBtn.disabled = false;
+                        self.elements.startImportBtn.textContent = BX.message('EXCEL_IMPORTER_JS_START_IMPORT');
+                        self.updateStatus(BX.message('EXCEL_IMPORTER_JS_FILE_LOADED'));
+                    } else {
+                        self.showError(response.error || 'Неизвестная ошибка');
+                        self.resetUpload();
+                    }
+                },
+                onfailure: function() {
+                    self.showError('Ошибка связи с сервером');
+                    self.resetUpload();
+                }
+            });
+        },
+
+        /**
+         * Показ предупреждений
+         */
+        showWarnings: function(message) {
+            if (this.elements.warningsContainer && this.elements.warningText) {
+                this.elements.warningText.textContent = message;
+                BX.show(this.elements.warningsContainer);
+            }
+        },
+
+        /**
+         * Начало импорта
+         */
+        startImport: function() {
+            if (this.isImporting) {
+                return;
+            }
+            
+            if (!this.totalRows || this.totalRows === 0) {
+                BX.UI.Notification.Center.notify({
+                    content: BX.message('EXCEL_IMPORTER_JS_NO_DATA'),
+                    position: 'top-center',
+                    autoHide: true,
+                    autoHideDelay: 3000
+                });
+                return;
+            }
+            
+            this.isImporting = true;
+            this.isCancelled = false;
+            this.currentStartRow = 3;
+            this.importedRows = 0;
+            this.errorCount = 0;
+            this.errors = [];
+            
+            // Скрываем загрузку, показываем прогресс
+            BX.hide(this.elements.fileInfo);
+            BX.show(this.elements.progressSection);
+            
+            // Очищаем предыдущие ошибки
+            if (this.elements.errorMessages) {
+                this.elements.errorMessages.innerHTML = '';
+                BX.hide(this.elements.errorsContainer);
+            }
+            
+            this.updateStatus(BX.message('EXCEL_IMPORTER_JS_IMPORTING'));
+            
+            // Начинаем обработку чанков
+            this.processChunk();
+        },
+
+        /**
+         * Возобновление импорта
+         */
+        resumeImport: function(sessionId) {
+            var self = this;
+            
+            BX.ajax({
+                method: 'POST',
+                dataType: 'json',
+                url: window.location.href,
+                data: {
+                    action: 'status',
+                    session_id: sessionId
+                },
+                onsuccess: function(response) {
+                    if (response && response.status) {
+                        self.currentSessionId = sessionId;
+                        self.totalRows = response.total_rows || 0;
+                        self.importedRows = response.imported_rows || 0;
+                        self.errorCount = response.error_count || 0;
+                        self.errors = response.errors || [];
+                        
+                        // Показываем прогресс
+                        BX.hide(BX('upload-section'));
+                        BX.show(self.elements.progressSection);
+                        
+                        // Обновляем прогресс
+                        self.updateProgress(
+                            response.progress || 0,
+                            self.importedRows,
+                            self.errorCount,
+                            self.errors
+                        );
+                        
+                        // Если импорт не завершен, продолжаем
+                        if (response.status === 'processing' || response.status === 'ready') {
+                            self.isImporting = true;
+                            self.isCancelled = false;
+                            self.currentStartRow = self.importedRows + 3;
+                            self.processChunk();
+                        } else if (response.status === 'completed') {
+                            self.showResult(self.importedRows, self.errorCount);
+                        }
+                    }
+                }
+            });
+        },
+
+        /**
+         * Обработка чанка данных
+         */
+        processChunk: function() {
+            var self = this;
+            
+            if (this.isCancelled) {
+                this.updateStatus(BX.message('EXCEL_IMPORTER_JS_CANCELLED'));
+                this.isImporting = false;
+                return;
+            }
+
+            var data = {
+                action: 'import',
+                start_row: this.currentStartRow,
+                session_id: this.currentSessionId
+            };
+
+            BX.ajax({
+                method: 'POST',
+                dataType: 'json',
+                url: window.location.href,
+                data: data,
+                onsuccess: function(response) {
+                    if (response.success) {
+                        self.importedRows += response.imported;
+                        self.errorCount += response.errors;
+                        
+                        // Добавляем новые ошибки
+                        if (response.error_messages && response.error_messages.length > 0) {
+                            self.errors = self.errors.concat(response.error_messages);
+                        }
+                        
+                        self.updateProgress(
+                            response.progress,
+                            self.importedRows,
+                            self.errorCount,
+                            self.errors
+                        );
+
+                        if (!response.is_complete) {
+                            self.currentStartRow = response.next_start_row;
+                            // Небольшая задержка для снижения нагрузки
+                            setTimeout(function() {
+                                self.processChunk();
+                            }, 100);
+                        } else {
+                            self.isImporting = false;
+                            self.showResult(self.importedRows, self.errorCount);
+                        }
+                    } else {
+                        self.showError(response.error || 'Ошибка импорта');
+                        self.isImporting = false;
+                    }
+                },
+                onfailure: function() {
+                    self.showError('Ошибка связи с сервером');
+                    self.isImporting = false;
+                }
+            });
+        },
+
+        /**
+         * Обновление прогресса
+         */
+        updateProgress: function(progress, imported, errors, errorMessages) {
+            // Обновляем прогресс-бар
+            if (this.elements.progressFill) {
+                this.elements.progressFill.style.width = progress + '%';
+                var fillText = BX.findChild(this.elements.progressFill, {class: 'progress-fill-text'}, true);
+                if (fillText) {
+                    fillText.textContent = progress.toFixed(1) + '%';
+                }
+            }
+            
+            if (this.elements.progressPercent) {
+                this.elements.progressPercent.textContent = progress.toFixed(1) + '%';
+            }
+            
+            if (this.elements.importedRows) {
+                this.elements.importedRows.textContent = imported;
+            }
+            
+            if (this.elements.errorCount) {
+                this.elements.errorCount.textContent = errors;
+            }
+            
+            if (this.elements.totalRows) {
+                this.elements.totalRows.textContent = this.totalRows;
+            }
+            
+            var statusText = progress < 100 ? 
+                BX.message('EXCEL_IMPORTER_JS_IMPORTING') + ' ' + progress.toFixed(1) + '%' : 
+                BX.message('EXCEL_IMPORTER_JS_COMPLETE');
+            this.updateStatus(statusText);
+
+            // Отображаем ошибки
+            if (errorMessages && errorMessages.length > 0) {
+                this.showErrors(errorMessages);
+            }
+        },
+
+        /**
+         * Отображение ошибок
+         */
+        showErrors: function(errorMessages) {
+            if (!this.elements.errorsContainer || !this.elements.errorMessages) {
+                return;
+            }
+            
+            BX.show(this.elements.errorsContainer);
+            
+            if (this.elements.errorsTotal) {
+                this.elements.errorsTotal.textContent = this.errorCount;
+            }
+            
+            // Добавляем только новые ошибки
+            var currentCount = this.elements.errorMessages.children.length;
+            var newMessages = errorMessages.slice(currentCount);
+            
+            BX.each(newMessages, function(msg) {
+                var div = document.createElement('div');
+                div.className = 'error-message';
+                div.textContent = msg;
+                self.elements.errorMessages.appendChild(div);
+            });
+            
+            // Автоматически прокручиваем к последней ошибке
+            if (newMessages.length > 0) {
+                this.elements.errorMessages.scrollTop = this.elements.errorMessages.scrollHeight;
+            }
+        },
+
+        /**
+         * Переключение видимости ошибок
+         */
+        toggleErrors: function() {
+            if (!this.elements.errorMessages) {
+                return;
+            }
+            
+            if (this.elements.errorMessages.style.display === 'none') {
+                BX.show(this.elements.errorMessages);
+                if (this.elements.toggleErrorsBtn) {
+                    this.elements.toggleErrorsBtn.textContent = BX.message('EXCEL_IMPORTER_HIDE_ERRORS');
+                }
+            } else {
+                BX.hide(this.elements.errorMessages);
+                if (this.elements.toggleErrorsBtn) {
+                    this.elements.toggleErrorsBtn.textContent = BX.message('EXCEL_IMPORTER_SHOW_ERRORS');
+                }
+            }
+        },
+
+        /**
+         * Отображение результата
+         */
+        showResult: function(imported, errors) {
+            BX.hide(this.elements.progressSection);
+            BX.show(this.elements.resultSection);
+            
+            if (this.elements.resultImported) {
+                this.elements.resultImported.textContent = imported;
+            }
+            
+            if (this.elements.resultErrors) {
+                this.elements.resultErrors.textContent = errors;
+            }
+            
+            // Если есть ошибки, меняем цвет результата
+            if (errors > 0) {
+                var message = this.elements.resultMessage || BX('result-message-' + this.componentId);
+                if (message) {
+                    BX.addClass(message, 'result-with-errors');
+                }
+            }
+            
+            this.updateStatus(BX.message('EXCEL_IMPORTER_JS_COMPLETE'));
+        },
+
+        /**
+         * Отмена импорта
+         */
+        cancelImport: function() {
+            if (!this.isImporting) {
+                return;
+            }
+            
+            if (confirm(BX.message('EXCEL_IMPORTER_JS_CONFIRM_CANCEL'))) {
+                this.isCancelled = true;
+                
+                var self = this;
+                BX.ajax({
+                    method: 'POST',
+                    dataType: 'json',
+                    url: window.location.href,
+                    data: {
+                        action: 'cancel',
+                        session_id: this.currentSessionId
+                    },
+                    onsuccess: function() {
+                        self.isImporting = false;
+                        self.updateStatus(BX.message('EXCEL_IMPORTER_JS_CANCELLED'));
+                        BX.UI.Notification.Center.notify({
+                            content: BX.message('EXCEL_IMPORTER_JS_CANCELLED'),
+                            position: 'top-center',
+                            autoHide: true,
+                            autoHideDelay: 3000
+                        });
+                        setTimeout(function() {
+                            self.resetImport();
+                        }, 2000);
+                    }
+                });
+            }
+        },
+
+        /**
+         * Сброс импорта (начать новый)
+         */
+        resetImport: function() {
+            this.isImporting = false;
+            this.isCancelled = false;
+            this.currentSessionId = null;
+            this.totalRows = 0;
+            this.importedRows = 0;
+            this.errorCount = 0;
+            this.errors = [];
+            this.currentStartRow = 3;
+            
+            // Показываем форму загрузки
+            BX.show(BX('upload-section'));
+            BX.hide(this.elements.progressSection);
+            BX.hide(this.elements.resultSection);
+            BX.hide(this.elements.fileInfo);
+            BX.hide(this.elements.fileStructure);
+            BX.show(this.elements.dropZone);
+            
+            if (this.elements.fileInput) {
+                this.elements.fileInput.value = '';
+            }
+            
+            if (this.elements.startImportBtn) {
+                this.elements.startImportBtn.disabled = true;
+                this.elements.startImportBtn.textContent = BX.message('EXCEL_IMPORTER_JS_START_IMPORT');
+            }
+            
+            if (this.elements.warningsContainer) {
+                BX.hide(this.elements.warningsContainer);
+            }
+            
+            if (this.elements.errorsContainer) {
+                BX.hide(this.elements.errorsContainer);
+                if (this.elements.errorMessages) {
+                    this.elements.errorMessages.innerHTML = '';
+                }
+            }
+            
+            // Сбрасываем прогресс
+            if (this.elements.progressFill) {
+                this.elements.progressFill.style.width = '0%';
+            }
+            if (this.elements.progressPercent) {
+                this.elements.progressPercent.textContent = '0%';
+            }
+            
+            this.updateStatus('Готов к импорту');
+        },
+
+        /**
+         * Сброс загрузки файла
+         */
+        resetUpload: function() {
+            BX.hide(this.elements.fileInfo);
+            BX.hide(this.elements.fileStructure);
+            BX.show(this.elements.dropZone);
+            
+            if (this.elements.fileInput) {
+                this.elements.fileInput.value = '';
+            }
+            
+            if (this.elements.startImportBtn) {
+                this.elements.startImportBtn.disabled = true;
+                this.elements.startImportBtn.textContent = BX.message('EXCEL_IMPORTER_JS_START_IMPORT');
+            }
+            
+            if (this.elements.warningsContainer) {
+                BX.hide(this.elements.warningsContainer);
+            }
+            
+            this.updateStatus('Выберите файл');
+        },
+
+        /**
+         * Удаление сессии
+         */
+        deleteSession: function(sessionId) {
+            var self = this;
+            
+            if (!confirm('Удалить сессию импорта?')) {
+                return;
+            }
+            
+            BX.ajax({
+                method: 'POST',
+                dataType: 'json',
+                url: window.location.href,
+                data: {
+                    action: 'delete',
+                    session_id: sessionId
+                },
+                onsuccess: function(response) {
+                    if (response.success) {
+                        var item = BX.findChildByClassName(document, 'session-item', true);
+                        if (item && item.getAttribute('data-session-id') === sessionId) {
+                            BX.remove(item);
+                        }
+                        BX.UI.Notification.Center.notify({
+                            content: 'Сессия удалена',
+                            position: 'top-center',
+                            autoHide: true,
+                            autoHideDelay: 2000
+                        });
+                    }
+                }
+            });
+        },
+
+        /**
+         * Скачивание лога
+         */
+        downloadLog: function() {
+            var logData = {
+                session_id: this.currentSessionId,
+                total_rows: this.totalRows,
+                imported_rows: this.importedRows,
+                error_count: this.errorCount,
+                errors: this.errors,
+                timestamp: new Date().toISOString()
+            };
+            
+            var blob = new Blob([JSON.stringify(logData, null, 2)], {type: 'application/json'});
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'import_log_' + this.currentSessionId + '.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        },
+
+        /**
+         * Проверка статуса
+         */
+        checkStatus: function() {
+            var self = this;
+            
+            BX.ajax({
+                method: 'POST',
+                dataType: 'json',
+                url: window.location.href,
+                data: {
+                    action: 'status'
+                },
+                onsuccess: function(response) {
+                    if (response.status === 'completed') {
+                        // Есть завершенный импорт
+                        var uploadSection = BX('upload-section');
+                        if (uploadSection) {
+                            BX.hide(uploadSection);
+                        }
+                        BX.show(self.elements.resultSection);
+                        if (self.elements.resultImported) {
+                            self.elements.resultImported.textContent = response.imported_rows || 0;
+                        }
+                        if (self.elements.resultErrors) {
+                            self.elements.resultErrors.textContent = response.error_count || 0;
+                        }
+                    }
+                }
+            });
+        },
+
+        /**
+         * Обновление статуса
+         */
+        updateStatus: function(message) {
+            if (this.elements.progressStatus) {
+                this.elements.progressStatus.textContent = message;
+            }
+        },
+
+        /**
+         * Показ ошибки
+         */
+        showError: function(message) {
+            BX.UI.Notification.Center.notify({
+                content: BX.message('EXCEL_IMPORTER_JS_ERROR') + ': ' + message,
+                position: 'top-center',
+                autoHide: true,
+                autoHideDelay: 5000
+            });
+        },
+
+        /**
+         * Форматирование размера файла
+         */
+        formatFileSize: function(bytes) {
+            if (bytes < 1024) {
+                return bytes + ' B';
+            }
+            if (bytes < 1048576) {
+                return (bytes / 1024).toFixed(1) + ' KB';
+            }
+            return (bytes / 1048576).toFixed(1) + ' MB';
+        }
+    };
+
+    // Инициализация при загрузке DOM
+    BX.ready(function() {
+        var componentId = BX('component-id-default');
+        if (!componentId) {
+            // Ищем все компоненты на странице
+            var components = BX.findChildrenByClassName(document, 'excel-importer-wrap');
+            BX.each(components, function(component) {
+                var id = component.id.replace('excel-importer-', '');
+                if (id) {
+                    var iblockId = BX('iblock-id-' + id);
+                    var chunkSize = BX('chunk-size-' + id);
+                    
+                    new BX.ExcelImporter.Controller({
+                        componentId: id,
+                        iblockId: iblockId ? parseInt(iblockId.value) : 0,
+                        chunkSize: chunkSize ? parseInt(chunkSize.value) : 50
+                    });
+                }
+            });
+        } else {
+            // Если есть компонент по умолчанию
+            var id = componentId.value || 'default';
+            var iblockId = BX('iblock-id-' + id);
+            var chunkSize = BX('chunk-size-' + id);
+            
+            new BX.ExcelImporter.Controller({
+                componentId: id,
+                iblockId: iblockId ? parseInt(iblockId.value) : 0,
+                chunkSize: chunkSize ? parseInt(chunkSize.value) : 50
+            });
+        }
+    });
+
+})();
+
+
+
+
+==========================================================
+
+
+Файл языковых констант (lang/ru/.description.php)
+
+
+
+<?php
+
+$MESS['EXCEL_IMPORTER_TITLE'] = 'Импорт данных из Excel';
+$MESS['EXCEL_IMPORTER_STRUCTURE_TITLE'] = 'Структура файла Excel:';
+$MESS['EXCEL_IMPORTER_ROW_1'] = 'Строка 1:';
+$MESS['EXCEL_IMPORTER_ROW_1_DESC'] = 'Заголовки таблицы (для удобства)';
+$MESS['EXCEL_IMPORTER_ROW_2'] = 'Строка 2:';
+$MESS['EXCEL_IMPORTER_ROW_2_DESC'] = 'Символьные коды полей инфоблока';
+$MESS['EXCEL_IMPORTER_ROW_3'] = 'Строка 3+:';
+$MESS['EXCEL_IMPORTER_ROW_3_DESC'] = 'Данные для импорта';
+$MESS['EXCEL_IMPORTER_SUPPORT_NOTE'] = 'Поддерживаются: стандартные поля (NAME, CODE, ACTIVE и др.) и свойства инфоблока';
+$MESS['EXCEL_IMPORTER_ACTIVE_SESSIONS'] = 'Активные сессии импорта';
+$MESS['EXCEL_IMPORTER_CONTINUE'] = 'Продолжить';
+$MESS['EXCEL_IMPORTER_DELETE'] = 'Удалить';
+$MESS['EXCEL_IMPORTER_STATUS_READY'] = 'Готов';
+$MESS['EXCEL_IMPORTER_STATUS_PROCESSING'] = 'Выполняется';
+$MESS['EXCEL_IMPORTER_STATUS_COMPLETED'] = 'Завершен';
+$MESS['EXCEL_IMPORTER_STATUS_ERROR'] = 'Ошибка';
+$MESS['EXCEL_IMPORTER_STATUS_CANCELLED'] = 'Отменен';
+$MESS['EXCEL_IMPORTER_DRAG_OR_CLICK'] = 'Перетащите файл Excel сюда или нажмите для выбора';
+$MESS['EXCEL_IMPORTER_SELECT_FILE'] = 'Выбрать файл';
+$MESS['EXCEL_IMPORTER_FIELDS_FOUND'] = 'Найдено полей';
+$MESS['EXCEL_IMPORTER_ROWS_FOUND'] = 'Найдено строк';
+$MESS['EXCEL_IMPORTER_START_IMPORT'] = 'Начать импорт';
+$MESS['EXCEL_IMPORTER_CANCEL'] = 'Отмена';
+$MESS['EXCEL_IMPORTER_IMPORTING'] = 'Импорт данных...';
+$MESS['EXCEL_IMPORTER_WAITING'] = 'Ожидание...';
+$MESS['EXCEL_IMPORTER_TOTAL_ROWS'] = 'Всего строк';
+$MESS['EXCEL_IMPORTER_IMPORTED'] = 'Импортировано';
+$MESS['EXCEL_IMPORTER_ERRORS'] = 'Ошибок';
+$MESS['EXCEL_IMPORTER_ERROR_LIST'] = 'Список ошибок';
+$MESS['EXCEL_IMPORTER_SHOW_ERRORS'] = 'Показать ошибки';
+$MESS['EXCEL_IMPORTER_HIDE_ERRORS'] = 'Скрыть ошибки';
+$MESS['EXCEL_IMPORTER_CANCEL_IMPORT'] = 'Отменить импорт';
+$MESS['EXCEL_IMPORTER_COMPLETE'] = 'Импорт завершен!';
+$MESS['EXCEL_IMPORTER_SUCCESSFULLY'] = 'Успешно импортировано';
+$MESS['EXCEL_IMPORTER_WARNINGS'] = 'Предупреждения';
+$MESS['EXCEL_IMPORTER_NEW_IMPORT'] = 'Начать новый импорт';
+$MESS['EXCEL_IMPORTER_DOWNLOAD_LOG'] = 'Скачать лог';
+
+// JS сообщения
+$MESS['EXCEL_IMPORTER_JS_UPLOADING'] = 'Загрузка файла...';
+$MESS['EXCEL_IMPORTER_JS_FILE_LOADED'] = 'Файл загружен. Нажмите "Начать импорт"';
+$MESS['EXCEL_IMPORTER_JS_START_IMPORT'] = 'Начать импорт';
+$MESS['EXCEL_IMPORTER_JS_IMPORTING'] = 'Импорт...';
+$MESS['EXCEL_IMPORTER_JS_COMPLETE'] = 'Импорт завершен!';
+$MESS['EXCEL_IMPORTER_JS_CANCELLED'] = 'Импорт отменен';
+$MESS['EXCEL_IMPORTER_JS_ERROR'] = 'Ошибка';
+$MESS['EXCEL_IMPORTER_JS_CONFIRM_CANCEL'] = 'Вы уверены, что хотите отменить импорт?';
+$MESS['EXCEL_IMPORTER_JS_WRONG_FORMAT'] = 'Пожалуйста, выберите файл Excel (.xlsx или .xls)';
+$MESS['EXCEL_IMPORTER_JS_NO_DATA'] = 'Нет данных для импорта';
+
+
+
+==================================================
+
+
+<?php
+
+$MESS['EXCEL_IMPORTER_TITLE'] = 'Импорт данных из Excel';
+$MESS['EXCEL_IMPORTER_STRUCTURE_TITLE'] = 'Структура файла Excel:';
+$MESS['EXCEL_IMPORTER_ROW_1'] = 'Строка 1:';
+$MESS['EXCEL_IMPORTER_ROW_1_DESC'] = 'Заголовки таблицы (для удобства)';
+$MESS['EXCEL_IMPORTER_ROW_2'] = 'Строка 2:';
+$MESS['EXCEL_IMPORTER_ROW_2_DESC'] = 'Символьные коды полей инфоблока';
+$MESS['EXCEL_IMPORTER_ROW_3'] = 'Строка 3+:';
+$MESS['EXCEL_IMPORTER_ROW_3_DESC'] = 'Данные для импорта';
+$MESS['EXCEL_IMPORTER_SUPPORT_NOTE'] = 'Поддерживаются: стандартные поля (NAME, CODE, ACTIVE и др.) и свойства инфоблока';
+$MESS['EXCEL_IMPORTER_ACTIVE_SESSIONS'] = 'Активные сессии импорта';
+$MESS['EXCEL_IMPORTER_CONTINUE'] = 'Продолжить';
+$MESS['EXCEL_IMPORTER_DELETE'] = 'Удалить';
+$MESS['EXCEL_IMPORTER_STATUS_READY'] = 'Готов';
+$MESS['EXCEL_IMPORTER_STATUS_PROCESSING'] = 'Выполняется';
+$MESS['EXCEL_IMPORTER_STATUS_COMPLETED'] = 'Завершен';
+$MESS['EXCEL_IMPORTER_STATUS_ERROR'] = 'Ошибка';
+$MESS['EXCEL_IMPORTER_STATUS_CANCELLED'] = 'Отменен';
+$MESS['EXCEL_IMPORTER_DRAG_OR_CLICK'] = 'Перетащите файл Excel сюда или нажмите для выбора';
+$MESS['EXCEL_IMPORTER_SELECT_FILE'] = 'Выбрать файл';
+$MESS['EXCEL_IMPORTER_FIELDS_FOUND'] = 'Найдено полей';
+$MESS['EXCEL_IMPORTER_ROWS_FOUND'] = 'Найдено строк';
+$MESS['EXCEL_IMPORTER_START_IMPORT'] = 'Начать импорт';
+$MESS['EXCEL_IMPORTER_CANCEL'] = 'Отмена';
+$MESS['EXCEL_IMPORTER_IMPORTING'] = 'Импорт данных...';
+$MESS['EXCEL_IMPORTER_WAITING'] = 'Ожидание...';
+$MESS['EXCEL_IMPORTER_TOTAL_ROWS'] = 'Всего строк';
+$MESS['EXCEL_IMPORTER_IMPORTED'] = 'Импортировано';
+$MESS['EXCEL_IMPORTER_ERRORS'] = 'Ошибок';
+$MESS['EXCEL_IMPORTER_ERROR_LIST'] = 'Список ошибок';
+$MESS['EXCEL_IMPORTER_SHOW_ERRORS'] = 'Показать ошибки';
+$MESS['EXCEL_IMPORTER_HIDE_ERRORS'] = 'Скрыть ошибки';
+$MESS['EXCEL_IMPORTER_CANCEL_IMPORT'] = 'Отменить импорт';
+$MESS['EXCEL_IMPORTER_COMPLETE'] = 'Импорт завершен!';
+$MESS['EXCEL_IMPORTER_SUCCESSFULLY'] = 'Успешно импортировано';
+$MESS['EXCEL_IMPORTER_WARNINGS'] = 'Предупреждения';
+$MESS['EXCEL_IMPORTER_NEW_IMPORT'] = 'Начать новый импорт';
+$MESS['EXCEL_IMPORTER_DOWNLOAD_LOG'] = 'Скачать лог';
+
+// JS сообщения
+$MESS['EXCEL_IMPORTER_JS_UPLOADING'] = 'Загрузка файла...';
+$MESS['EXCEL_IMPORTER_JS_FILE_LOADED'] = 'Файл загружен. Нажмите "Начать импорт"';
+$MESS['EXCEL_IMPORTER_JS_START_IMPORT'] = 'Начать импорт';
+$MESS['EXCEL_IMPORTER_JS_IMPORTING'] = 'Импорт...';
+$MESS['EXCEL_IMPORTER_JS_COMPLETE'] = 'Импорт завершен!';
+$MESS['EXCEL_IMPORTER_JS_CANCELLED'] = 'Импорт отменен';
+$MESS['EXCEL_IMPORTER_JS_ERROR'] = 'Ошибка';
+$MESS['EXCEL_IMPORTER_JS_CONFIRM_CANCEL'] = 'Вы уверены, что хотите отменить импорт?';
+$MESS['EXCEL_IMPORTER_JS_WRONG_FORMAT'] = 'Пожалуйста, выберите файл Excel (.xlsx или .xls)';
+$MESS['EXCEL_IMPORTER_JS_NO_DATA'] = 'Нет данных для импорта';
+
+
+===========================================================
+
+Обновленный style.css (с использованием стилей Битрикс)
+
+/* Основные стили компонента */
+.excel-importer-wrap {
+    max-width: 1000px;
+    margin: 20px auto;
+    padding: 20px;
+    font-family: var(--ui-font-family, 'Helvetica Neue', Helvetica, Arial, sans-serif);
+}
+
+.import-container {
+    background: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    padding: 25px;
+}
+
+.import-container h2 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    color: #333;
+    font-size: 24px;
+    font-weight: 600;
+}
+
+/* Информационный блок */
+.info-box {
+    display: flex;
+    background: #f0f7ff;
+    border-left: 4px solid #2fc6f6;
+    padding: 15px 20px;
+    margin-bottom: 25px;
+    border-radius: 4px;
+}
+
+.info-box-icon {
+    font-size: 24px;
+    margin-right: 15px;
+    flex-shrink: 0;
+}
+
+.info-box-content {
+    flex: 1;
+}
+
+.info-box-content p {
+    margin: 0 0 10px 0;
+}
+
+.info-box-content ul {
+    margin: 10px 0;
+    padding-left: 20px;
+}
+
+.info-box-content li {
+    margin: 5px 0;
+    line-height: 1.5;
+}
+
+.info-note {
+    margin-top: 10px;
+    color: #666;
+}
+
+/* Активные сессии */
+.active-sessions {
+    margin-bottom: 25px;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #e9ecef;
+}
+
+.active-sessions h3 {
+    margin: 0 0 15px 0;
+    font-size: 16px;
+    color: #333;
+}
+
+.session-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    margin-bottom: 8px;
+    background: #fff;
+    border-radius: 4px;
+    border: 1px solid #e9ecef;
+    transition: all 0.2s;
+}
+
+.session-item:hover {
+    border-color: #2fc6f6;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.session-info {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.session-file {
+    font-weight: 500;
+    color: #333;
+}
+
+.session-status {
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.status-ready {
+    background: #e9ecef;
+    color: #6c757d;
+}
+
+.status-processing {
+    background: #cce5ff;
+    color: #004085;
+}
+
+.status-completed {
+    background: #d4edda;
+    color: #155724;
+}
+
+.status-error {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.status-cancelled {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.session-progress {
+    font-weight: 600;
+    color: #0071b9;
+}
+
+.session-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* Зона загрузки */
+.upload-section {
+    margin-bottom: 25px;
+}
+
+.upload-area {
+    border: 2px dashed #d0d7dd;
+    border-radius: 8px;
+    padding: 50px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: #fafbfc;
+    min-height: 200px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.upload-area:hover {
+    border-color: #2fc6f6;
+    background: #f0f7ff;
+}
+
+.upload-area.dragover {
+    border-color: #2fc6f6;
+    background: #e3f0fa;
+    transform: scale(1.02);
+}
+
+.upload-icon {
+    font-size: 64px;
+    margin-bottom: 15px;
+    line-height: 1;
+}
+
+.upload-area p {
+    margin: 10px 0;
+    color: #6c757d;
+    font-size: 16px;
+}
+
+/* Информация о файле */
+.file-info {
+    margin-top: 20px;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #e9ecef;
+}
+
+.file-details {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.file-icon {
+    font-size: 32px;
+    line-height: 1;
+}
+
+.file-info-content {
+    flex: 1;
+}
+
+.file-name {
+    display: block;
+    font-weight: 600;
+    color: #333;
+    font-size: 16px;
+    word-break: break-all;
+}
+
+.file-size {
+    display: block;
+    color: #6c757d;
+    font-size: 13px;
+    margin-top: 2px;
+}
+
+.file-structure {
+    margin: 15px 0;
+    padding: 15px;
+    background: #fff;
+    border-radius: 4px;
+    border: 1px solid #e9ecef;
+}
+
+.structure-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 0;
+    border-bottom: 1px solid #f1f3f5;
+}
+
+.structure-row:last-child {
+    border-bottom: none;
+}
+
+.structure-label {
+    color: #6c757d;
+}
+
+.structure-value {
+    font-weight: 500;
+    color: #333;
+}
+
+.warning-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 10px;
+    padding: 12px 15px;
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: 4px;
+    color: #856404;
+}
+
+.warning-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+.warning-text {
+    flex: 1;
+}
+
+.file-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+    flex-wrap: wrap;
+}
+
+/* Прогресс */
+.progress-container {
+    margin: 20px 0;
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.progress-title {
+    font-weight: 500;
+    color: #333;
+}
+
+.progress-percent {
+    font-weight: 600;
+    color: #0071b9;
+}
+
+.progress-bar-wrap {
+    width: 100%;
+    height: 32px;
+    background: #e9ecef;
+    border-radius: 16px;
+    overflow: hidden;
+    position: relative;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    border-radius: 16px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(to right, #2fc6f6, #0071b9);
+    transition: width 0.5s ease;
+    border-radius: 16px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 10px;
+}
+
+.progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+.progress-fill-text {
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    position: relative;
+    z-index: 1;
+}
+
+.progress-status {
+    margin-top: 10px;
+    text-align: center;
+    color: #6c757d;
+    font-size: 14px;
+    min-height: 20px;
+}
+
+/* Статистика */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 15px;
+    margin: 25px 0;
+}
+
+.stat-card {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 15px 20px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #e9ecef;
+    transition: all 0.2s;
+}
+
+.stat-card:hover {
+    border-color: #2fc6f6;
+}
+
+.stat-icon {
+    font-size: 28px;
+    line-height: 1;
+}
+
+.stat-info {
+    flex: 1;
+}
+
+.stat-label {
+    display: block;
+    font-size: 12px;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.stat-value {
+    display: block;
+    font-size: 24px;
+    font-weight: 700;
+    color: #333;
+}
+
+.stat-success .stat-value {
+    color: #28a745;
+}
+
+.stat-error .stat-value {
+    color: #dc3545;
+}
+
+/* Ошибки */
+.errors-container {
+    margin: 15px 0;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #e9ecef;
+}
+
+.errors-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.errors-header h4 {
+    margin: 0;
+    color: #dc3545;
+}
+
+.error-messages {
+    margin-top: 10px;
+    padding: 10px;
+    background: #fff5f5;
+    border: 1px solid #ffcdd2;
+    border-radius: 4px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.error-message {
+    padding: 8px 12px;
+    margin: 4px 0;
+    color: #d32f2f;
+    font-size: 13px;
+    background: #fff;
+    border-radius: 4px;
+    border-left: 3px solid #dc3545;
+    font-family: monospace;
+    word-break: break-word;
+}
+
+.error-message:last-child {
+    margin-bottom: 0;
+}
+
+/* Кнопки */
+.btn {
+    display: inline-block;
+    padding: 8px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: center;
+    text-decoration: none;
+    transition: all 0.2s;
+    line-height: 1.5;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: #2fc6f6;
+    color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: #1ea8d6;
+}
+
+.btn-success {
+    background: #28a745;
+    color: #fff;
+}
+
+.btn-success:hover:not(:disabled) {
+    background: #218838;
+}
+
+.btn-danger {
+    background: #dc3545;
+    color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: #c82333;
+}
+
+.btn-secondary {
+    background: #6c757d;
+    color: #fff;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #5a6268;
+}
+
+.btn-sm {
+    padding: 5px 12px;
+    font-size: 12px;
+}
+
+/* Результат */
+.result-message {
+    padding: 30px;
+    text-align: center;
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    border-radius: 6px;
+    margin: 20px 0;
+}
+
+.result-message.result-with-errors {
+    background: #fff3cd;
+    border-color: #ffc107;
+}
+
+.result-icon {
+    font-size: 48px;
+    margin-bottom: 15px;
+}
+
+.result-message h3 {
+    margin: 0 0 15px 0;
+    color: #155724;
+}
+
+.result-message.result-with-errors h3 {
+    color: #856404;
+}
+
+.result-stats {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    margin: 15px 0;
+    flex-wrap: wrap;
+}
+
+.result-stat {
+    font-size: 16px;
+}
+
+.result-label {
+    color: #6c757d;
+    margin-right: 5px;
+}
+
+.result-value {
+    font-weight: 700;
+    font-size: 20px;
+}
+
+.result-success {
+    color: #28a745;
+}
+
+.result-error {
+    color: #dc3545;
+}
+
+.result-warnings {
+    margin-top: 15px;
+    padding: 15px;
+    background: #fff3cd;
+    border-radius: 4px;
+    border: 1px solid #ffc107;
+    text-align: left;
+}
+
+.result-warnings h4 {
+    margin: 0 0 10px 0;
+    color: #856404;
+}
+
+.result-warnings p {
+    margin: 0;
+    color: #856404;
+    font-size: 14px;
+}
+
+.result-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 15px;
+}
+
+.progress-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-top: 15px;
+    flex-wrap: wrap;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+    .excel-importer-wrap {
+        padding: 10px;
+    }
+    
+    .import-container {
+        padding: 15px;
+    }
+    
+    .stats-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+    
+    .session-item {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    
+    .session-info {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+    
+    .file-details {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .file-actions {
+        flex-direction: column;
+    }
+    
+    .btn {
+        width: 100%;
+    }
+    
+    .result-stats {
+        flex-direction: column;
+        gap: 10px;
+    }
+}
+
+@media (max-width: 480px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .upload-area {
+        padding: 30px 15px;
+        min-height: 150px;
+    }
+    
+    .upload-icon {
+        font-size: 40px;
+    }
+}
+
+
+==================================================================
+
+
+
+Обновленный class.php с использованием БД
+
+
+<?php
+
+/**
+ * Компонент для импорта больших Excel файлов в инфоблок Битрикс
+ * Использует базу данных для хранения состояния импорта (безопасное хранение)
+ * 
+ * Особенности:
+ * - Поддержка файлов с 5000+ строк
+ * - Чанковая загрузка по 50 строк через AJAX
+ * - Автоматическое сопоставление полей по символьным кодам
+ * - Поддержка различных типов свойств инфоблока
+ * - Отображение прогресса и ошибок в реальном времени
+ * - Автоматическое удаление файла после импорта
+ * - Хранение данных в БД вместо сессии (безопасность)
+ * - Возможность возобновления импорта после перезагрузки
+ */
+
+// Проверяем, что компонент вызван в контексте Битрикс
+if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) die();
+
+// Подключаем необходимые пространства имен для работы
+use Bitrix\Main\Context;           // Для работы с HTTP-запросами
+use Bitrix\Main\Loader;            // Для загрузки модулей Битрикс
+use Bitrix\Main\Error;             // Для работы с ошибками
+use Bitrix\Main\ErrorCollection;   // Для коллекции ошибок
+use Bitrix\Iblock\ElementTable;    // Для работы с элементами инфоблоков
+use Bitrix\Iblock\PropertyTable;   // Для работы со свойствами инфоблоков
+use PhpOffice\PhpSpreadsheet\Reader\Xlsx;  // Для чтения Excel файлов
+use PhpOffice\PhpSpreadsheet\Shared\Date;   // Для работы с датами в Excel
+use Bitrix\Main\Type\DateTime;     // Для работы с датами в Битрикс
+
+// Подключаем класс для работы с таблицей импорта
+require_once $_SERVER['DOCUMENT_ROOT'] . '/local/classes/ExcelImportTable.php';
+
+/**
+ * Основной класс компонента импорта Excel
+ */
+class ExcelImporterComponent extends \CBitrixComponent
+{
+    /**
+     * Коллекция ошибок для хранения всех ошибок выполнения
+     * @var ErrorCollection
+     */
+    private $errorCollection;
+    
+    /**
+     * ID инфоблока, в который будем импортировать данные
+     * @var int
+     */
+    private $iblockId;
+    
+    /**
+     * Размер чанка - количество строк, обрабатываемых за один AJAX-запрос
+     * @var int
+     */
+    private $chunkSize = 50;
+    
+    /**
+     * Директория для временного хранения загруженных файлов
+     * @var string
+     */
+    private $uploadDir = '/upload/excel_import/';
+    
+    /**
+     * Карта свойств инфоблока для быстрого доступа
+     * Структура: [CODE => [ID, TYPE, USER_TYPE, MULTIPLE]]
+     * @var array
+     */
+    private $propertyMap = [];
+    
+    /**
+     * Карта стандартных полей инфоблока
+     * @var array
+     */
+    private $fieldsMap = [];
+
+    /**
+     * ID текущего пользователя
+     * @var int
+     */
+    private $userId;
+
+    /**
+     * Текущая сессия импорта из БД
+     * @var array
+     */
+    private $sessionData = [];
+
+    /**
+     * Конструктор компонента
+     * Инициализирует коллекцию ошибок и получает ID пользователя
+     * 
+     * @param object $component Компонент-родитель
+     */
+    public function __construct($component = null)
+    {
+        parent::__construct($component);
+        $this->errorCollection = new ErrorCollection();
+        
+        // Получаем ID текущего пользователя
+        global $USER;
+        $this->userId = $USER->IsAuthorized() ? (int)$USER->GetID() : 0;
+    }
+
+    /**
+     * Метод подготовки параметров компонента
+     * Выполняется до инициализации компонента
+     * 
+     * @param array $arParams Параметры компонента
+     * @return array Обработанные параметры
+     */
+    public function onPrepareComponentParams($arParams)
+    {
+        // Сохраняем ID инфоблока из параметров
+        $this->iblockId = (int)$arParams['IBLOCK_ID'];
+        // Сохраняем размер чанка из параметров или используем значение по умолчанию
+        $this->chunkSize = (int)$arParams['CHUNK_SIZE'] ?: 50;
+        
+        // Валидация: проверяем, что указан ID инфоблока
+        if ($this->iblockId <= 0) {
+            $this->errorCollection->setError(new Error('Не указан ID инфоблока'));
+        }
+
+        // Проверяем, что пользователь авторизован
+        if ($this->userId <= 0) {
+            $this->errorCollection->setError(new Error('Для импорта необходима авторизация'));
+        }
+
+        // Проверяем, что модуль инфоблоков установлен и активен
+        if (!Loader::includeModule('iblock')) {
+            $this->errorCollection->setError(new Error('Модуль инфоблоков не установлен'));
+        }
+
+        // Проверяем, что библиотека PhpSpreadsheet установлена через Composer
+        if (!Loader::includeModule('phpspreadsheet')) {
+            $this->errorCollection->setError(new Error('Библиотека PhpSpreadsheet не установлена'));
+        }
+
+        return $arParams;
+    }
+
+    /**
+     * Основной метод выполнения компонента
+     * Определяет режим работы (обычный или AJAX) и подготавливает данные
+     */
+    public function executeComponent()
+    {
+        // Если есть ошибки, показываем их и завершаем выполнение
+        if ($this->errorCollection->hasErrors()) {
+            $this->arResult['ERRORS'] = $this->errorCollection->toArray();
+            $this->includeComponentTemplate();
+            return;
+        }
+
+        // Загружаем карту полей инфоблока (стандартные поля и свойства)
+        $this->loadIblockFields();
+
+        // Получаем текущий HTTP-запрос для проверки AJAX-режима
+        $request = Context::getCurrent()->getRequest();
+        
+        // Если это AJAX-запрос с параметром action, обрабатываем его отдельно
+        if ($request->isAjaxRequest() && $request->get('action')) {
+            $this->handleAjaxRequest($request);
+            return;
+        }
+
+        /**
+         * Получаем активные сессии текущего пользователя
+         * Если есть незавершенный импорт, предлагаем продолжить
+         */
+        $activeSessions = ExcelImportTable::getUserSessions($this->userId);
+        
+        // Подготавливаем данные для отображения в шаблоне
+        $this->arResult['IBLOCK_ID'] = $this->iblockId;
+        $this->arResult['UPLOAD_DIR'] = $this->uploadDir;
+        $this->arResult['CHUNK_SIZE'] = $this->chunkSize;
+        $this->arResult['USER_ID'] = $this->userId;
+        $this->arResult['ACTIVE_SESSIONS'] = $activeSessions;
+        
+        /**
+         * Если есть параметр session_id в запросе, загружаем конкретную сессию
+         */
+        $sessionId = $request->get('session_id');
+        if ($sessionId) {
+            $this->arResult['SESSION'] = ExcelImportTable::getSession($sessionId);
+        }
+        
+        $this->includeComponentTemplate();
+    }
+
+    /**
+     * Загружает карту полей инфоблока
+     * Сохраняет стандартные поля и свойства в мапы для быстрого доступа
+     */
+    private function loadIblockFields()
+    {
+        /**
+         * Стандартные поля инфоблока, доступные для импорта
+         * Ключ - символьный код поля, значение - имя поля в Битрикс
+         */
+        $this->fieldsMap = [
+            'NAME' => 'NAME',                       // Название элемента
+            'CODE' => 'CODE',                       // Символьный код
+            'ACTIVE' => 'ACTIVE',                   // Активность (Y/N)
+            'SORT' => 'SORT',                       // Сортировка
+            'PREVIEW_TEXT' => 'PREVIEW_TEXT',       // Анонс
+            'PREVIEW_PICTURE' => 'PREVIEW_PICTURE', // Картинка анонса
+            'DETAIL_TEXT' => 'DETAIL_TEXT',         // Детальное описание
+            'DETAIL_PICTURE' => 'DETAIL_PICTURE',   // Детальная картинка
+            'XML_ID' => 'XML_ID',                   // Внешний код
+            'TAGS' => 'TAGS',                       // Теги
+            'DATE_ACTIVE_FROM' => 'DATE_ACTIVE_FROM', // Дата начала активности
+            'DATE_ACTIVE_TO' => 'DATE_ACTIVE_TO',   // Дата окончания активности
+        ];
+
+        /**
+         * Загружаем все активные свойства инфоблока
+         * Получаем ID, CODE, TYPE, USER_TYPE, MULTIPLE для каждого свойства
+         */
+        $propertyIterator = PropertyTable::getList([
+            'filter' => [
+                '=IBLOCK_ID' => $this->iblockId,    // Фильтр по ID инфоблока
+                '=ACTIVE' => 'Y'                     // Только активные свойства
+            ],
+            'select' => ['ID', 'CODE', 'PROPERTY_TYPE', 'USER_TYPE', 'MULTIPLE']
+        ]);
+
+        // Формируем карту свойств для быстрого доступа по символьному коду
+        while ($property = $propertyIterator->fetch()) {
+            if (!empty($property['CODE'])) {
+                $this->propertyMap[$property['CODE']] = [
+                    'ID' => $property['ID'],
+                    'CODE' => $property['CODE'],
+                    'TYPE' => $property['PROPERTY_TYPE'],      // S, N, L, F, G, E
+                    'USER_TYPE' => $property['USER_TYPE'],     // Дата, DateTime, HTML и др.
+                    'MULTIPLE' => $property['MULTIPLE'] === 'Y' // Множественное свойство
+                ];
+            }
+        }
+    }
+
+    /**
+     * Обработчик AJAX-запросов
+     * Определяет тип действия и вызывает соответствующий метод
+     * 
+     * @param Request $request HTTP-запрос
+     */
+    private function handleAjaxRequest($request)
+    {
+        // Получаем параметр action из запроса
+        $action = $request->get('action');
+        
+        /**
+         * Маршрутизация AJAX-действий
+         */
+        switch ($action) {
+            case 'upload':
+                // Обработка загрузки файла
+                $this->handleUpload($request);
+                break;
+            case 'import':
+                // Импорт очередного чанка данных
+                $this->handleImport($request);
+                break;
+            case 'status':
+                // Получение статуса текущего импорта
+                $this->getStatus($request);
+                break;
+            case 'cancel':
+                // Отмена импорта и очистка временных файлов
+                $this->cancelImport($request);
+                break;
+            case 'resume':
+                // Возобновление прерванного импорта
+                $this->resumeImport($request);
+                break;
+            case 'delete':
+                // Удаление сессии импорта
+                $this->deleteSession($request);
+                break;
+            default:
+                // Неизвестное действие
+                $this->returnJson(['error' => 'Неизвестное действие']);
+        }
+    }
+
+    /**
+     * Обработка загрузки Excel файла
+     * 
+     * Процесс:
+     * 1. Проверка файла
+     * 2. Сохранение на сервер
+     * 3. Анализ структуры (заголовки и коды)
+     * 4. Создание записи в БД
+     * 
+     * @param Request $request HTTP-запрос с файлом
+     */
+    private function handleUpload($request)
+    {
+        try {
+            /**
+             * Создаем директорию для загрузки, если она не существует
+             * Права 0777 для обеспечения записи
+             */
+            $uploadPath = $_SERVER['DOCUMENT_ROOT'] . $this->uploadDir;
+            if (!is_dir($uploadPath)) {
+                mkdir($uploadPath, 0777, true);
+            }
+
+            /**
+             * Получаем файл из запроса
+             * Проверяем, что файл загружен без ошибок
+             */
+            $file = $request->getFile('file');
+            if (!$file || $file['error'] !== UPLOAD_ERR_OK) {
+                throw new \Exception('Ошибка загрузки файла: ' . ($file['error'] ?? 'неизвестная ошибка'));
+            }
+
+            /**
+             * Проверяем расширение файла
+             * Разрешены только .xlsx и .xls
+             */
+            $ext = pathinfo($file['name'], PATHINFO_EXTENSION);
+            if (!in_array(strtolower($ext), ['xlsx', 'xls'])) {
+                throw new \Exception('Неверный формат файла. Разрешены только .xlsx и .xls');
+            }
+
+            /**
+             * Генерируем уникальное имя файла
+             * Формат: import_время_хэш.расширение
+             * Это предотвращает конфликты имен
+             */
+            $fileName = 'import_' . time() . '_' . md5(uniqid()) . '.' . $ext;
+            $filePath = $uploadPath . $fileName;
+
+            /**
+             * Перемещаем загруженный файл в постоянное хранилище
+             * Если не удалось - выбрасываем исключение
+             */
+            if (!move_uploaded_file($file['tmp_name'], $filePath)) {
+                throw new \Exception('Не удалось сохранить файл на сервере');
+            }
+
+            /**
+             * Загружаем Excel файл для анализа структуры
+             * Используем PhpSpreadsheet для чтения
+             */
+            $reader = new Xlsx();
+            $spreadsheet = $reader->load($filePath);
+            $worksheet = $spreadsheet->getActiveSheet();
+            
+            /**
+             * Читаем заголовки из первой строки
+             * Проходим по столбцам, пока есть данные (максимум 100 столбцов)
+             */
+            $headers = [];
+            $colIndex = 'A';        // Начинаем с колонки A
+            $colNum = 0;            // Счетчик колонок
+            while ($worksheet->getCell($colIndex . '1')->getValue() !== null && $colNum < 100) {
+                $value = trim((string)$worksheet->getCell($colIndex . '1')->getValue());
+                if (!empty($value)) {
+                    $headers[] = $value;  // Добавляем заголовок в массив
+                }
+                $colIndex++;         // Переходим к следующей колонке
+                $colNum++;
+            }
+
+            /**
+             * Читаем символьные коды из второй строки
+             * Это ключи для сопоставления с полями инфоблока
+             */
+            $codes = [];
+            $colIndex = 'A';
+            $colNum = 0;
+            while ($worksheet->getCell($colIndex . '2')->getValue() !== null && $colNum < 100) {
+                $value = trim((string)$worksheet->getCell($colIndex . '2')->getValue());
+                if (!empty($value)) {
+                    $codes[] = $value;  // Добавляем код в массив
+                }
+                $colIndex++;
+                $colNum++;
+            }
+
+            /**
+             * Валидация структуры файла
+             * Проверяем, что количество заголовков соответствует количеству кодов
+             */
+            if (count($headers) !== count($codes)) {
+                throw new \Exception('Количество заголовков (' . count($headers) . 
+                                    ') не соответствует количеству символьных кодов (' . count($codes) . ')');
+            }
+
+            if (empty($codes)) {
+                throw new \Exception('Не найдены символьные коды полей во второй строке');
+            }
+
+            /**
+             * Сопоставление кодов с полями инфоблока
+             * Проверяем, какие коды существуют в инфоблоке
+             */
+            $unknownFields = [];     // Массив неизвестных кодов
+            $fieldMapping = [];      // Массив соответствий полей
+            
+            foreach ($codes as $index => $code) {
+                // Проверяем, существует ли код в стандартных полях или свойствах
+                if (isset($this->fieldsMap[$code]) || isset($this->propertyMap[$code])) {
+                    $fieldMapping[] = [
+                        'header' => $headers[$index],
+                        'code' => $code,
+                        'type' => isset($this->fieldsMap[$code]) ? 'field' : 'property'
+                    ];
+                } else {
+                    $unknownFields[] = $code;  // Код не найден в инфоблоке
+                }
+            }
+
+            /**
+             * Формируем данные для сохранения в БД
+             */
+            $warnings = [];
+            if (!empty($unknownFields)) {
+                $warnings = [
+                    'unknown_fields' => $unknownFields,
+                    'message' => 'Найдены неизвестные символьные коды: ' . implode(', ', $unknownFields) . 
+                                '. Эти поля будут пропущены при импорте.'
+                ];
+            }
+
+            /**
+             * Определяем общее количество строк данных
+             * Вычитаем 2 строки (заголовок и коды)
+             */
+            $totalRows = $worksheet->getHighestRow() - 2;
+            $totalRows = max(0, $totalRows);  // Не может быть отрицательным
+
+            /**
+             * Получаем IP-адрес пользователя для аудита
+             */
+            $ipAddress = Context::getCurrent()->getServer()->get('REMOTE_ADDR');
+
+            /**
+             * Создаем новую сессию импорта в БД
+             */
+            $sessionResult = ExcelImportTable::createSession([
+                'USER_ID' => $this->userId,
+                'FILE_PATH' => $filePath,
+                'FILE_NAME' => $file['name'],
+                'TOTAL_ROWS' => $totalRows,
+                'WARNINGS' => $warnings,
+                'FIELD_MAPPING' => $fieldMapping,
+                'IP_ADDRESS' => $ipAddress
+            ]);
+
+            if (!$sessionResult) {
+                throw new \Exception('Не удалось создать сессию импорта в базе данных');
+            }
+
+            /**
+             * Возвращаем успешный ответ с информацией о файле
+             * Идентификатор сессии теперь генерируется в БД
+             */
+            $this->returnJson([
+                'success' => true,
+                'total_rows' => $totalRows,
+                'field_count' => count($fieldMapping),
+                'warnings' => $warnings,
+                'session_id' => $sessionResult['SESSION_ID'],
+                'session_id_db' => $sessionResult['ID'],
+                'message' => 'Файл успешно загружен. Найдено полей: ' . count($fieldMapping)
+            ]);
+
+        } catch (\Exception $e) {
+            /**
+             * В случае ошибки возвращаем сообщение об ошибке
+             */
+            $this->returnJson([
+                'success' => false,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Обработка импорта чанка данных
+     * 
+     * Процесс:
+     * 1. Загрузка данных се
+
+
+
+=====================================================
+
+
+
+
+Класс для работы с таблицей импорта
+
+
+
+
+<?php
+
+/**
+ * Класс для работы с таблицей состояний импорта Excel
+ * Заменяет использование сессии для хранения данных импорта
+ */
+
+use Bitrix\Main\ORM\Data\DataManager;
+use Bitrix\Main\ORM\Fields\IntegerField;
+use Bitrix\Main\ORM\Fields\StringField;
+use Bitrix\Main\ORM\Fields\TextField;
+use Bitrix\Main\ORM\Fields\EnumField;
+use Bitrix\Main\ORM\Fields\DatetimeField;
+use Bitrix\Main\ORM\Fields\FloatField;
+use Bitrix\Main\ORM\Fields\Validators\LengthValidator;
+use Bitrix\Main\Type\DateTime;
+
+/**
+ * Класс ExcelImportTable для работы с таблицей b_excel_import_session
+ */
+class ExcelImportTable extends DataManager
+{
+    /**
+     * Возвращает имя таблицы в базе данных
+     * 
+     * @return string
+     */
+    public static function getTableName()
+    {
+        return 'b_excel_import_session';
+    }
+
+    /**
+     * Определяет структуру полей таблицы
+     * Каждое поле описывается с помощью классов из ORM Битрикс
+     * 
+     * @return array
+     */
+    public static function getMap()
+    {
+        return [
+            /**
+             * ID - первичный ключ, автоинкремент
+             */
+            new IntegerField('ID', [
+                'primary' => true,
+                'autocomplete' => true,
+                'title' => 'ID записи'
+            ]),
+            
+            /**
+             * SESSION_ID - уникальный идентификатор сессии импорта
+             * Генерируется при создании новой сессии
+             */
+            new StringField('SESSION_ID', [
+                'required' => true,
+                'unique' => true,
+                'validation' => function() {
+                    return [
+                        new LengthValidator(1, 255)
+                    ];
+                },
+                'title' => 'Идентификатор сессии'
+            ]),
+            
+            /**
+             * USER_ID - ID пользователя, запустившего импорт
+             * Используется для контроля доступа
+             */
+            new IntegerField('USER_ID', [
+                'required' => false,
+                'title' => 'ID пользователя'
+            ]),
+            
+            /**
+             * FILE_PATH - полный путь к файлу на сервере
+             */
+            new StringField('FILE_PATH', [
+                'required' => true,
+                'validation' => function() {
+                    return [
+                        new LengthValidator(1, 500)
+                    ];
+                },
+                'title' => 'Путь к файлу'
+            ]),
+            
+            /**
+             * FILE_NAME - исходное имя файла
+             * Сохраняется для отображения пользователю
+             */
+            new StringField('FILE_NAME', [
+                'required' => true,
+                'validation' => function() {
+                    return [
+                        new LengthValidator(1, 255)
+                    ];
+                },
+                'title' => 'Имя файла'
+            ]),
+            
+            /**
+             * TOTAL_ROWS - общее количество строк для импорта
+             */
+            new IntegerField('TOTAL_ROWS', [
+                'required' => true,
+                'default' => 0,
+                'title' => 'Всего строк'
+            ]),
+            
+            /**
+             * IMPORTED_ROWS - количество успешно импортированных строк
+             */
+            new IntegerField('IMPORTED_ROWS', [
+                'required' => true,
+                'default' => 0,
+                'title' => 'Импортировано строк'
+            ]),
+            
+            /**
+             * ERROR_COUNT - общее количество ошибок при импорте
+             */
+            new IntegerField('ERROR_COUNT', [
+                'required' => true,
+                'default' => 0,
+                'title' => 'Количество ошибок'
+            ]),
+            
+            /**
+             * PROGRESS - процент выполнения импорта
+             * Хранится с двумя знаками после запятой
+             */
+            new FloatField('PROGRESS', [
+                'required' => true,
+                'default' => 0.00,
+                'title' => 'Прогресс (%)'
+            ]),
+            
+            /**
+             * STATUS - текущий статус импорта
+             * Возможные значения: ready, processing, completed, error, cancelled
+             */
+            new EnumField('STATUS', [
+                'required' => true,
+                'values' => ['ready', 'processing', 'completed', 'error', 'cancelled'],
+                'default' => 'ready',
+                'title' => 'Статус'
+            ]),
+            
+            /**
+             * ERRORS - JSON строка с массивом ошибок
+             * Каждая ошибка содержит текст и номер строки
+             */
+            new TextField('ERRORS', [
+                'required' => false,
+                'title' => 'Ошибки (JSON)'
+            ]),
+            
+            /**
+             * WARNINGS - JSON строка с массивом предупреждений
+             * Например, о неизвестных полях
+             */
+            new TextField('WARNINGS', [
+                'required' => false,
+                'title' => 'Предупреждения (JSON)'
+            ]),
+            
+            /**
+             * FIELD_MAPPING - JSON строка с маппингом полей
+             * Сохраняет соответствие между колонками Excel и полями инфоблока
+             */
+            new TextField('FIELD_MAPPING', [
+                'required' => false,
+                'title' => 'Маппинг полей (JSON)'
+            ]),
+            
+            /**
+             * START_TIME - время начала импорта
+             */
+            new DatetimeField('START_TIME', [
+                'required' => true,
+                'default' => function() {
+                    return new DateTime();
+                },
+                'title' => 'Время начала'
+            ]),
+            
+            /**
+             * END_TIME - время завершения импорта
+             */
+            new DatetimeField('END_TIME', [
+                'required' => false,
+                'title' => 'Время завершения'
+            ]),
+            
+            /**
+             * LAST_UPDATE - время последнего обновления
+             * Используется для автоматической очистки старых сессий
+             */
+            new DatetimeField('LAST_UPDATE', [
+                'required' => true,
+                'default' => function() {
+                    return new DateTime();
+                },
+                'title' => 'Время последнего обновления'
+            ]),
+            
+            /**
+             * IP_ADDRESS - IP-адрес пользователя
+             * Для дополнительной безопасности и аудита
+             */
+            new StringField('IP_ADDRESS', [
+                'required' => false,
+                'validation' => function() {
+                    return [
+                        new LengthValidator(1, 45)
+                    ];
+                },
+                'title' => 'IP-адрес'
+            ]),
+        ];
+    }
+
+    /**
+     * Создает новую сессию импорта
+     * 
+     * @param array $data Данные для создания сессии
+     * @return int|false ID созданной записи или false
+     */
+    public static function createSession(array $data)
+    {
+        // Генерируем уникальный идентификатор сессии
+        $sessionId = 'imp_' . time() . '_' . md5(uniqid() . $data['USER_ID'] . $data['FILE_PATH']);
+        
+        // Формируем данные для вставки
+        $fields = [
+            'SESSION_ID' => $sessionId,
+            'USER_ID' => (int)$data['USER_ID'],
+            'FILE_PATH' => $data['FILE_PATH'],
+            'FILE_NAME' => $data['FILE_NAME'],
+            'TOTAL_ROWS' => (int)$data['TOTAL_ROWS'],
+            'IMPORTED_ROWS' => 0,
+            'ERROR_COUNT' => 0,
+            'PROGRESS' => 0,
+            'STATUS' => 'ready',
+            'ERRORS' => null,
+            'WARNINGS' => isset($data['WARNINGS']) ? json_encode($data['WARNINGS']) : null,
+            'FIELD_MAPPING' => isset($data['FIELD_MAPPING']) ? json_encode($data['FIELD_MAPPING']) : null,
+            'START_TIME' => new DateTime(),
+            'LAST_UPDATE' => new DateTime(),
+            'IP_ADDRESS' => $data['IP_ADDRESS'] ?? null
+        ];
+
+        try {
+            $result = self::add($fields);
+            if ($result->isSuccess()) {
+                return [
+                    'ID' => $result->getId(),
+                    'SESSION_ID' => $sessionId
+                ];
+            }
+        } catch (\Exception $e) {
+            // Логируем ошибку
+            AddMessage2Log('Ошибка создания сессии импорта: ' . $e->getMessage(), 'excel_import');
+        }
+
+        return false;
+    }
+
+    /**
+     * Обновляет данные сессии импорта
+     * 
+     * @param string $sessionId Идентификатор сессии
+     * @param array $data Данные для обновления
+     * @return bool Результат операции
+     */
+    public static function updateSession($sessionId, array $data)
+    {
+        try {
+            // Всегда обновляем время последнего изменения
+            $data['LAST_UPDATE'] = new DateTime();
+            
+            $result = self::update(
+                ['SESSION_ID' => $sessionId],
+                $data
+            );
+            
+            if ($result->isSuccess()) {
+                return true;
+            } else {
+                // Логируем ошибки
+                foreach ($result->getErrors() as $error) {
+                    AddMessage2Log('Ошибка обновления сессии: ' . $error->getMessage(), 'excel_import');
+                }
+            }
+        } catch (\Exception $e) {
+            AddMessage2Log('Ошибка обновления сессии: ' . $e->getMessage(), 'excel_import');
+        }
+
+        return false;
+    }
+
+    /**
+     * Получает данные сессии по идентификатору
+     * 
+     * @param string $sessionId Идентификатор сессии
+     * @return array|false Данные сессии или false
+     */
+    public static function getSession($sessionId)
+    {
+        try {
+            $result = self::getList([
+                'filter' => ['=SESSION_ID' => $sessionId],
+                'limit' => 1
+            ]);
+            
+            if ($session = $result->fetch()) {
+                // Декодируем JSON-поля
+                $session['ERRORS'] = json_decode($session['ERRORS'], true) ?? [];
+                $session['WARNINGS'] = json_decode($session['WARNINGS'], true) ?? [];
+                $session['FIELD_MAPPING'] = json_decode($session['FIELD_MAPPING'], true) ?? [];
+                
+                return $session;
+            }
+        } catch (\Exception $e) {
+            AddMessage2Log('Ошибка получения сессии: ' . $e->getMessage(), 'excel_import');
+        }
+
+        return false;
+    }
+
+    /**
+     * Получает активные сессии пользователя
+     * 
+     * @param int $userId ID пользователя
+     * @return array Список активных сессий
+     */
+    public static function getUserSessions($userId)
+    {
+        try {
+            $result = self::getList([
+                'filter' => [
+                    '=USER_ID' => $userId,
+                    '!=STATUS' => ['completed', 'cancelled', 'error']
+                ],
+                'order' => ['LAST_UPDATE' => 'DESC'],
+                'limit' => 10
+            ]);
+            
+            return $result->fetchAll();
+        } catch (\Exception $e) {
+            AddMessage2Log('Ошибка получения сессий пользователя: ' . $e->getMessage(), 'excel_import');
+        }
+
+        return [];
+    }
+
+    /**
+     * Удаляет сессию импорта
+     * 
+     * @param string $sessionId Идентификатор сессии
+     * @return bool Результат операции
+     */
+    public static function deleteSession($sessionId)
+    {
+        try {
+            $result = self::delete(['SESSION_ID' => $sessionId]);
+            if ($result->isSuccess()) {
+                return true;
+            }
+        } catch (\Exception $e) {
+            AddMessage2Log('Ошибка удаления сессии: ' . $e->getMessage(), 'excel_import');
+        }
+
+        return false;
+    }
+
+    /**
+     * Удаляет старые сессии (старше указанного количества дней)
+     * 
+     * @param int $days Количество дней для хранения
+     * @return int Количество удаленных сессий
+     */
+    public static function cleanOldSessions($days = 7)
+    {
+        try {
+            $date = new DateTime();
+            $date->add('- ' . $days . ' days');
+            
+            // Получаем старые сессии
+            $result = self::getList([
+                'filter' => [
+                    '<=LAST_UPDATE' => $date,
+                    'STATUS' => ['completed', 'cancelled', 'error']
+                ],
+                'select' => ['ID', 'FILE_PATH']
+            ]);
+            
+            $deleted = 0;
+            while ($session = $result->fetch()) {
+                // Удаляем файл, если он существует
+                if (file_exists($session['FILE_PATH'])) {
+                    unlink($session['FILE_PATH']);
+                }
+                
+                // Удаляем запись
+                if (self::delete(['ID' => $session['ID']])->isSuccess()) {
+                    $deleted++;
+                }
+            }
+            
+            return $deleted;
+        } catch (\Exception $e) {
+            AddMessage2Log('Ошибка очистки старых сессий: ' . $e->getMessage(), 'excel_import');
+        }
+
+        return 0;
+    }
+}
